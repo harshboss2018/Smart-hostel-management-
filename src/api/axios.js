@@ -1,8 +1,10 @@
 import axios from 'axios';
 import { demoRequest } from './demoBackend';
 
+const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || '/api';
+
 const http = axios.create({
-  baseURL: '/api',
+  baseURL: apiBaseUrl,
 });
 
 const shouldFallbackToDemo = (error, url) => {
