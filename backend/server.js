@@ -16,6 +16,7 @@ connectDB().then(() => {
 });
 
 const app = express();
+app.set('trust proxy', 1);
 
 const parseAllowedOrigins = (rawValue) => {
   if (!rawValue) return null;
@@ -26,21 +27,39 @@ const parseAllowedOrigins = (rawValue) => {
 };
 
 // Middleware
-const allowedOrigins =
-  parseAllowedOrigins(process.env.CORS_ORIGIN) || [
-    'http://localhost:5173',
-    'http://localhost:5174',
-    'http://localhost:5175',
-  ];
+const isProduction = process.env.NODE_ENV === 'production';
+const corsOriginSetting = (process.env.CORS_ORIGIN || '').trim();
+const configuredAllowedOrigins = parseAllowedOrigins(corsOriginSetting);
+
+// In production, require an explicit CORS_ORIGIN (or '*') to avoid accidentally opening the API.
+// In development, allow all origins by default for convenience.
+const allowAllOrigins = corsOriginSetting === '*' || (!isProduction && !corsOriginSetting);
+const allowedOrigins = configuredAllowedOrigins || [];
+
+const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const originMatches = (allowed, origin) => {
+  if (!allowed) return false;
+  if (allowed === origin) return true;
+  if (!allowed.includes('*')) return false;
+  const pattern = `^${allowed.split('*').map(escapeRegex).join('.*')}$`;
+  return new RegExp(pattern).test(origin);
+};
 
 app.use(
   cors({
     origin: (origin, callback) => {
       if (!origin) return callback(null, true);
-      if (allowedOrigins.includes(origin)) return callback(null, true);
+
+      if (allowAllOrigins) return callback(null, true);
+
+      if (allowedOrigins.some((allowed) => originMatches(allowed, origin))) {
+        return callback(null, true);
+      }
+
       return callback(new Error(`CORS blocked for origin: ${origin}`));
     },
-    credentials: true,
+    credentials: process.env.CORS_CREDENTIALS === 'true',
   }),
 );
 app.use(express.json());
@@ -78,9 +97,16 @@ app.get('/api/dashboard', (req, res) => {
   res.status(200).json({ success: true, data: { status: 'Dashboard data connected successfully!' } });
 });
 
+// API 404 (prevents frontend routing from hiding API typos)
+app.use('/api', (req, res) => {
+  res
+    .status(404)
+    .json({ success: false, message: `API route not found: ${req.method} ${req.originalUrl}` });
+});
+
 // Global Error Handler
 app.use((err, req, res, next) => {
-  console.error('🔥 [INTERNAL ERROR]:', err.stack);
+  console.error('[INTERNAL ERROR]:', err.stack);
   res.status(500).json({ 
     success: false, 
     message: err.message || 'Internal Server Error',
